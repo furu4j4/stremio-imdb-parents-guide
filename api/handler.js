@@ -2,10 +2,10 @@ const cheerio = require('cheerio');
 
 const manifest = {
   id: "org.stremio.imdbparentsguide",
-  version: "1.0.1",
+  version: "1.0.2",
   name: "IMDb Parents Guide",
-  description: "Adds full IMDb Parents Guide (Sex & Nudity, Violence, Profanity, etc.) directly into the Stremio description.",
-  resources: ["meta"],
+  description: "Shows full IMDb Parents Guide directly in the stream list",
+  resources: ["meta", "stream"],   // ← now supports both
   types: ["movie", "series"],
   idPrefixes: ["tt"],
   logo: "https://upload.wikimedia.org/wikipedia/commons/thumb/6/69/IMDB_Logo_2016.svg/512px-IMDB_Logo_2016.svg.png",
@@ -28,7 +28,7 @@ async function getParentsGuide(type, id) {
 
   // Certification
   let certification = "";
-  $("p, .certificate-text").each((_, el) => {
+  $("p, .certificate-text, .ipc-metadata-list__item").each((_, el) => {
     const text = $(el).text();
     if (text.includes("Motion Picture Rating") || text.includes("Rated ") || text.includes("Certification")) {
       certification = text.trim();
@@ -37,26 +37,25 @@ async function getParentsGuide(type, id) {
   });
 
   const sections = [];
-  $(".parental-guide-section").each((_, el) => {
+  $(".parental-guide-section, .ipc-section").each((_, el) => {
     const $section = $(el);
     const title = $section.find("h3").first().text().trim();
 
-    if (!["Sex & Nudity", "Violence", "Violence & Gore", "Profanity", "Alcohol, Drugs & Smoking", "Frightening & Intense Scenes", "Alcohol"].some(s => title.includes(s))) {
+    if (!["Sex & Nudity", "Violence & Gore", "Profanity", "Alcohol, Drugs & Smoking", "Frightening & Intense Scenes", "Violence", "Alcohol"].some(s => title.includes(s))) {
       return;
     }
 
-    const severity = $section.find(".severity-rating").first().text().trim() || "N/A";
+    const severity = $section.find(".severity-rating, .severity").first().text().trim() || "N/A";
     const voteText = $section.find(".vote-count").first().text().trim() || "";
-    const items = $section.find(".item-description, .item-list li")
+    const items = $section.find(".item-description, .item-list li, .ipc-html-content-inner-div")
       .map((_, item) => $(item).text().trim())
       .get()
       .filter(Boolean);
 
     let spoilers = [];
-    // Spoilers are often in a separate block after the list
     const spoilerBlock = $section.find(".spoiler-section, .spoiler");
     if (spoilerBlock.length) {
-      spoilers = spoilerBlock.nextAll().find(".item-description, li")
+      spoilers = spoilerBlock.find(".item-description, li")
         .map((_, item) => $(item).text().trim())
         .get()
         .filter(Boolean);
@@ -97,10 +96,12 @@ module.exports = async function handler(req, res) {
   const url = new URL(req.url, `https://${req.headers.host}`);
   const pathname = url.pathname;
 
+  // Manifest
   if (pathname === "/manifest.json" || pathname === "/") {
     return res.status(200).json(manifest);
   }
 
+  // Meta (details page - kept for extra safety)
   if (pathname.startsWith("/meta/")) {
     const parts = pathname.replace("/meta/", "").replace(".json", "").split("/");
     const type = parts[0];
@@ -115,10 +116,32 @@ module.exports = async function handler(req, res) {
       return res.status(200).json(meta);
     } catch (err) {
       console.error(err);
+      return res.status(200).json({ id, type, description: "⚠️ Could not load IMDb Parents Guide right now." });
+    }
+  }
+
+  // STREAM - this is the new part you asked for
+  if (pathname.startsWith("/stream/")) {
+    const parts = pathname.replace("/stream/", "").replace(".json", "").split("/");
+    const type = parts[0];
+    const id = parts[1];
+
+    if (!["movie", "series"].includes(type) || !id?.startsWith("tt")) {
+      return res.status(404).json({ streams: [] });
+    }
+
+    try {
+      const guide = await getParentsGuide(type, id);
       return res.status(200).json({
-        id, type,
-        description: "⚠️ Could not load IMDb Parents Guide right now. Please try again later."
+        streams: [{
+          name: "🎬 IMDb Parents Guide",
+          description: guide.description,
+          behaviorHints: { notWebReady: true }   // tells Stremio it's not a playable video
+        }]
       });
+    } catch (err) {
+      console.error(err);
+      return res.status(200).json({ streams: [] });
     }
   }
 

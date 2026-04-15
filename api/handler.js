@@ -1,4 +1,4 @@
-import cheerio from 'cheerio';
+const cheerio = require('cheerio');
 
 const manifest = {
   id: "org.stremio.imdbparentsguide",
@@ -78,7 +78,7 @@ async function getParentsGuide(type, id) {
   return { id, type, description: desc };
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -114,4 +114,4 @@ export default async function handler(req, res) {
   }
 
   res.status(404).send("Not found");
-}
+};

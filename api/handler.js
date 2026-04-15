@@ -2,9 +2,9 @@ const cheerio = require('cheerio');
 
 const manifest = {
   id: "org.stremio.imdbparentsguide",
-  version: "1.0.3",
+  version: "1.0.4",
   name: "IMDb Parents Guide",
-  description: "Shows full IMDb Parents Guide directly in the stream list (like the Ratings addon)",
+  description: "Full IMDb Parents Guide in stream list (like Ratings addon)",
   resources: ["meta", "stream"],
   types: ["movie", "series"],
   idPrefixes: ["tt"],
@@ -21,38 +21,37 @@ async function getParentsGuide(imdbId) {
   };
 
   const res = await fetch(url, { headers });
-  if (!res.ok) throw new Error(`IMDb returned ${res.status}`);
+  if (!res.ok) throw new Error(`IMDb ${res.status}`);
 
   const html = await res.text();
   const $ = cheerio.load(html);
 
+  // Certification
   let certification = "";
-  $("p, .certificate-text, .ipc-metadata-list__item").each((_, el) => {
-    const text = $(el).text();
-    if (text.includes("Motion Picture Rating") || text.includes("Rated ") || text.includes("Certification")) {
-      certification = text.trim();
+  $("h3").each((_, el) => {
+    if ($(el).text().includes("Motion Picture Rating (MPA)")) {
+      certification = $(el).next().text().trim();
       return false;
     }
   });
 
   const sections = [];
-  $(".parental-guide-section, .ipc-section").each((_, el) => {
-    const $section = $(el);
-    const title = $section.find("h3").first().text().trim();
-
+  $("h3").each((_, el) => {
+    const title = $(el).text().trim();
     if (!["Sex & Nudity", "Violence & Gore", "Profanity", "Alcohol, Drugs & Smoking", "Frightening & Intense Scenes", "Violence", "Alcohol"].some(s => title.includes(s))) return;
 
-    const severity = $section.find(".severity-rating, .severity").first().text().trim() || "N/A";
+    const $section = $(el).parent();
+    const severity = $section.find(".severity-rating").first().text().trim() || "N/A";
     const voteText = $section.find(".vote-count").first().text().trim() || "";
-    const items = $section.find(".item-description, .item-list li, .ipc-html-content-inner-div")
+    const items = $section.find("p, li").not(".severity-rating, .vote-count")
       .map((_, item) => $(item).text().trim())
       .get()
       .filter(Boolean);
 
     let spoilers = [];
-    const spoilerBlock = $section.find(".spoiler-section, .spoiler");
-    if (spoilerBlock.length) {
-      spoilers = spoilerBlock.find(".item-description, li")
+    const spoilerHeading = $section.find("h3").filter((_, h) => $(h).text().includes("Spoilers"));
+    if (spoilerHeading.length) {
+      spoilers = spoilerHeading.nextAll("p, li")
         .map((_, item) => $(item).text().trim())
         .get()
         .filter(Boolean);
@@ -93,31 +92,30 @@ module.exports = async function handler(req, res) {
   const url = new URL(req.url, `https://${req.headers.host}`);
   const pathname = url.pathname;
 
-  if (pathname === "/manifest.json" || pathname === "/") {
+  if (pathname === "/manifest.json" || pathname === "/" || pathname === "") {
     return res.status(200).json(manifest);
   }
 
-  // Extract clean IMDb ID (handles both movies and series episodes like tt1234567:1:1)
+  // Extract IMDb ID (works for both movie/tt123 and series/tt123:1:1)
   let imdbId = "";
   if (pathname.includes("/meta/") || pathname.includes("/stream/")) {
-    const cleanPath = pathname.replace("/meta/", "").replace("/stream/", "").replace(".json", "");
-    const parts = cleanPath.split("/");
-    const idPart = parts[1] || parts[0];
-    imdbId = idPart.split(":")[0];   // <-- THIS FIXES MOVIES + SERIES
+    const clean = pathname.replace("/meta/", "").replace("/stream/", "").replace(".json", "");
+    const parts = clean.split("/");
+    const idPart = parts[parts.length - 1] || parts[0];
+    imdbId = idPart.split(":")[0];
   }
 
-  // Meta (details page backup)
   if (pathname.startsWith("/meta/")) {
     if (!imdbId.startsWith("tt")) return res.status(404).json({});
     try {
       const description = await getParentsGuide(imdbId);
       return res.status(200).json({ id: imdbId, type: "movie", description });
     } catch (err) {
+      console.error(err);
       return res.status(200).json({ id: imdbId, type: "movie", description: "⚠️ Could not load Parents Guide right now." });
     }
   }
 
-  // STREAM - the line you see in the stream list
   if (pathname.startsWith("/stream/")) {
     if (!imdbId.startsWith("tt")) return res.status(200).json({ streams: [] });
 
@@ -128,12 +126,11 @@ module.exports = async function handler(req, res) {
           name: "🎬 IMDb Parents Guide",
           description: description,
           icon: "https://upload.wikimedia.org/wikipedia/commons/thumb/6/69/IMDB_Logo_2016.svg/512px-IMDB_Logo_2016.svg.png",
-          behaviorHints: {
-            notWebReady: true
-          }
+          behaviorHints: { notWebReady: true }
         }]
       });
     } catch (err) {
+      console.error(err);
       return res.status(200).json({ streams: [] });
     }
   }

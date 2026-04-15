@@ -2,7 +2,6 @@
   "name": "stremio-imdb-parents-guide",
   "version": "1.0.0",
   "description": "IMDb Parents Guide for Stremio",
-  "type": "module",
   "scripts": {
     "dev": "vercel dev"
   },

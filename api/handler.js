@@ -2,7 +2,7 @@ const cheerio = require('cheerio');
 
 const manifest = {
   id: "org.stremio.imdbparentsguide",
-  version: "1.0.0",
+  version: "1.0.1",
   name: "IMDb Parents Guide",
   description: "Adds full IMDb Parents Guide (Sex & Nudity, Violence, Profanity, etc.) directly into the Stremio description.",
   resources: ["meta"],
@@ -26,31 +26,40 @@ async function getParentsGuide(type, id) {
   const html = await res.text();
   const $ = cheerio.load(html);
 
+  // Certification
   let certification = "";
-  $("p").each((_, el) => {
+  $("p, .certificate-text").each((_, el) => {
     const text = $(el).text();
-    if (text.includes("Motion Picture Rating (MPA)") || text.includes("Rated ")) {
+    if (text.includes("Motion Picture Rating") || text.includes("Rated ") || text.includes("Certification")) {
       certification = text.trim();
       return false;
     }
   });
 
   const sections = [];
-  $(".ipc-section.parental-guide-section").each((_, el) => {
+  $(".parental-guide-section").each((_, el) => {
     const $section = $(el);
-    const title = $section.find('h3[data-testid="parental-guide-section-heading"]').text().trim() ||
-                  $section.find("h3").first().text().trim();
+    const title = $section.find("h3").first().text().trim();
 
-    if (!["Sex & Nudity", "Violence & Gore", "Profanity", "Alcohol, Drugs & Smoking", "Frightening & Intense Scenes"].some(s => title.includes(s))) return;
+    if (!["Sex & Nudity", "Violence", "Violence & Gore", "Profanity", "Alcohol, Drugs & Smoking", "Frightening & Intense Scenes", "Alcohol"].some(s => title.includes(s))) {
+      return;
+    }
 
-    const severity = $section.find(".severity").first().text().trim() || "N/A";
+    const severity = $section.find(".severity-rating").first().text().trim() || "N/A";
     const voteText = $section.find(".vote-count").first().text().trim() || "";
-    const items = $section.find(".item-description").map((_, item) => $(item).text().trim()).get().filter(Boolean);
+    const items = $section.find(".item-description, .item-list li")
+      .map((_, item) => $(item).text().trim())
+      .get()
+      .filter(Boolean);
 
     let spoilers = [];
-    const spoilersSection = $section.find(".spoilers-section");
-    if (spoilersSection.length) {
-      spoilers = spoilersSection.find(".item-description").map((_, item) => $(item).text().trim()).get().filter(Boolean);
+    // Spoilers are often in a separate block after the list
+    const spoilerBlock = $section.find(".spoiler-section, .spoiler");
+    if (spoilerBlock.length) {
+      spoilers = spoilerBlock.nextAll().find(".item-description, li")
+        .map((_, item) => $(item).text().trim())
+        .get()
+        .filter(Boolean);
     }
 
     sections.push({ title, severity, voteText, items, spoilers });
